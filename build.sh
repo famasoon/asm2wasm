@@ -1,35 +1,29 @@
 #!/bin/bash
 
-# AsmToWasm ビルドスクリプト
+echo "Building asm2wasm project..."
 
-echo "AsmToWasm プロジェクトをビルド中..."
-
-# ビルドディレクトリを作成
 if [ ! -d "build" ]; then
     mkdir build
 fi
 
 cd build
 
-# CMakeキャッシュをクリア（古い設定を削除）
 rm -f CMakeCache.txt
 
-# CMakeでビルド設定
-echo "CMakeでビルド設定中..."
+echo "Building with CMake..."
 CC=clang CXX=clang++ cmake ..
 
-# ビルド実行
-echo "ビルド実行中..."
+echo "Building..."
 make -j$(nproc)
 
 if [ $? -eq 0 ]; then
-    echo "ビルド成功!"
+    echo "Build successful!"
     echo ""
-    echo "使用方法:"
-    echo "  ./asmtowasm examples/simple_add.asm"
-    echo "  ./asmtowasm -o output.ll examples/arithmetic.asm"
-    echo "  ./asmtowasm --help"
+    echo "Usage:"
+    echo "  ./asm2wasm examples/simple_add.asm"
+    echo "  ./asm2wasm -o output.ll examples/arithmetic.asm"
+    echo "  ./asm2wasm --help"
 else
-    echo "ビルドエラーが発生しました。"
+    echo "Build error occurred."
     exit 1
 fi
