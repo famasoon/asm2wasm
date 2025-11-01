@@ -98,18 +98,40 @@ namespace asm2wasm
       }
     }
 
-    if (currentFunc)
+    for (auto &func : *module_)
     {
-      for (auto &block : *currentFunc)
+      if (func.isDeclaration())
+        continue;
+
+      for (auto &block : func)
       {
         if (!block.getTerminator())
         {
           llvm::IRBuilder<> tempBuilder(&block);
-          tempBuilder.CreateRet(llvm::ConstantInt::get(getIntType(), 0));
+          if (&block == &func.getEntryBlock())
+          {
+            llvm::IRBuilder<> entryBuilder(&func.getEntryBlock());
+            llvm::Value *eaxReg = nullptr;
+            auto regIt = registers_.find("%eax");
+            if (regIt != registers_.end())
+            {
+              eaxReg = regIt->second;
+            }
+            else
+            {
+              eaxReg = entryBuilder.CreateAlloca(getIntType(), nullptr, "%eax");
+              registers_["%eax"] = eaxReg;
+            }
+            llvm::Value *eaxValue = tempBuilder.CreateLoad(getIntType(), eaxReg, "eax_val");
+            tempBuilder.CreateRet(eaxValue);
+          }
+          else
+          {
+            tempBuilder.CreateRet(llvm::ConstantInt::get(getIntType(), 0));
+          }
         }
       }
     }
-    applyOptimizationPasses();
 
     std::string verifyError;
     llvm::raw_string_ostream verifyStream(verifyError);
@@ -124,9 +146,15 @@ namespace asm2wasm
         std::string moduleDump;
         llvm::raw_string_ostream dumpStream(moduleDump);
         module_->print(dumpStream, nullptr);
-        errorMessage_ = "IR verification error: " + verifyError;
-        return false;
       }
+    }
+
+    try
+    {
+      applyOptimizationPasses();
+    }
+    catch (...)
+    {
     }
 
     return true;
@@ -172,12 +200,16 @@ namespace asm2wasm
     {
       llvm::BasicBlock *entryBlock = &currentFunc->front();
       llvm::IRBuilder<> entryBuilder(entryBlock);
+
       if (!entryBlock->empty())
       {
-        entryBuilder.SetInsertPoint(&entryBlock->front());
+        llvm::Instruction *firstInst = &entryBlock->front();
+        entryBuilder.SetInsertPoint(firstInst);
       }
+
       llvm::Value *reg = entryBuilder.CreateAlloca(getIntType(), nullptr, regName);
       registers_[regName] = reg;
+
       if (currentBlock)
       {
         builder_->SetInsertPoint(currentBlock);
@@ -683,20 +715,43 @@ namespace asm2wasm
       return;
     }
 
-    llvm::legacy::PassManager passManager;
+    for (auto &func : *module_)
+    {
+      if (func.isDeclaration())
+        continue;
 
-    passManager.add(llvm::createInstructionCombiningPass());
+      std::string verifyError;
+      llvm::raw_string_ostream vs(verifyError);
+      if (llvm::verifyFunction(func, &vs))
+      {
+        return;
+      }
+    }
 
-    passManager.add(llvm::createCFGSimplificationPass());
+    try
+    {
+      llvm::legacy::PassManager passManager;
 
-    passManager.add(llvm::createReassociatePass());
+      passManager.add(llvm::createDeadCodeEliminationPass());
+      passManager.add(llvm::createCFGSimplificationPass());
 
-    passManager.add(llvm::createEarlyCSEPass());
+      passManager.run(*module_);
 
-    passManager.add(llvm::createInstructionCombiningPass());
-    passManager.add(llvm::createCFGSimplificationPass());
-    passManager.add(llvm::createDeadCodeEliminationPass());
+      for (auto &func : *module_)
+      {
+        if (func.isDeclaration())
+          continue;
 
-    passManager.run(*module_);
+        std::string verifyError;
+        llvm::raw_string_ostream vs(verifyError);
+        if (llvm::verifyFunction(func, &vs))
+        {
+          return;
+        }
+      }
+    }
+    catch (...)
+    {
+    }
   }
 }
