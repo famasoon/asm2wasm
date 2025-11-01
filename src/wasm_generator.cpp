@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <set>
 
 namespace asm2wasm
 {
@@ -230,11 +231,39 @@ namespace asm2wasm
 
   bool WasmGenerator::convertBasicBlock(llvm::BasicBlock *block, WasmFunction &wasmFunc)
   {
+    std::set<llvm::Value *> usedValues;
+
     for (auto &inst : *block)
     {
-      if (!convertInstruction(&inst, wasmFunc))
+      for (unsigned i = 0; i < inst.getNumOperands(); ++i)
       {
-        return false;
+        llvm::Value *op = inst.getOperand(i);
+        if (llvm::isa<llvm::Instruction>(op))
+        {
+          usedValues.insert(op);
+        }
+      }
+    }
+
+    for (auto &inst : *block)
+    {
+      if (llvm::isa<llvm::LoadInst>(inst))
+      {
+        llvm::LoadInst *load = llvm::cast<llvm::LoadInst>(&inst);
+        if (usedValues.count(load) > 0)
+        {
+          if (!convertMemoryInstruction(&inst, wasmFunc))
+          {
+            return false;
+          }
+        }
+      }
+      else
+      {
+        if (!convertInstruction(&inst, wasmFunc))
+        {
+          return false;
+        }
       }
     }
     return true;
@@ -347,8 +376,18 @@ namespace asm2wasm
     else if (llvm::isa<llvm::LoadInst>(lhs))
     {
       llvm::LoadInst *load = llvm::cast<llvm::LoadInst>(lhs);
-      uint32_t localIdx = getLocalIndex(load->getPointerOperand());
-      instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+      if (localMap_.count(load) > 0)
+      {
+        uint32_t localIdx = getLocalIndex(load);
+        instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+      }
+      else
+      {
+        llvm::Value *ptrOperand = load->getPointerOperand();
+        uint32_t localIdx = getLocalIndex(ptrOperand);
+        instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+        instructions.push_back(WasmInstruction(WasmOpcode::I32_LOAD));
+      }
     }
     else if (llvm::isa<llvm::Instruction>(lhs))
     {
@@ -364,8 +403,18 @@ namespace asm2wasm
     else if (llvm::isa<llvm::LoadInst>(rhs))
     {
       llvm::LoadInst *load = llvm::cast<llvm::LoadInst>(rhs);
-      uint32_t localIdx = getLocalIndex(load->getPointerOperand());
-      instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+      if (localMap_.count(load) > 0)
+      {
+        uint32_t localIdx = getLocalIndex(load);
+        instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+      }
+      else
+      {
+        llvm::Value *ptrOperand = load->getPointerOperand();
+        uint32_t localIdx = getLocalIndex(ptrOperand);
+        instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+        instructions.push_back(WasmInstruction(WasmOpcode::I32_LOAD));
+      }
     }
     else if (llvm::isa<llvm::Instruction>(rhs))
     {
@@ -673,6 +722,26 @@ namespace asm2wasm
         llvm::ConstantInt *constInt = llvm::cast<llvm::ConstantInt>(retValue);
         instructions.push_back(WasmInstruction(WasmOpcode::I32_CONST, constInt->getZExtValue()));
       }
+      else if (llvm::isa<llvm::LoadInst>(retValue))
+      {
+        llvm::LoadInst *load = llvm::cast<llvm::LoadInst>(retValue);
+        if (localMap_.count(load) > 0)
+        {
+          uint32_t localIdx = getLocalIndex(load);
+          instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+        }
+        else
+        {
+          uint32_t localIdx = getLocalIndex(load->getPointerOperand());
+          instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_LOAD));
+        }
+      }
+      else if (llvm::isa<llvm::Instruction>(retValue))
+      {
+        uint32_t localIdx = getLocalIndex(retValue);
+        instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+      }
     }
 
     instructions.push_back(WasmInstruction(WasmOpcode::RETURN));
@@ -718,6 +787,12 @@ namespace asm2wasm
       }
 
       instructions.push_back(WasmInstruction(WasmOpcode::I32_LOAD));
+
+      if (loadInst->getNumUses() > 0)
+      {
+        uint32_t resultIdx = assignLocalIndex(loadInst, convertLLVMType(loadInst->getType()), wasmFunc);
+        instructions.push_back(WasmInstruction(WasmOpcode::SET_LOCAL, resultIdx));
+      }
     }
     else if (llvm::isa<llvm::StoreInst>(inst))
     {
