@@ -269,6 +269,9 @@ namespace asm2wasm
     std::string errorMessage_;
     std::map<llvm::Function *, uint32_t> functionMap_;
     std::map<llvm::Value *, uint32_t> localMap_;
+    std::map<llvm::BasicBlock *, uint32_t> blockMap_;
+    std::map<llvm::BasicBlock *, uint32_t> blockIndices_;
+    llvm::Function *currentFunction_;
 
     WasmType convertLLVMType(llvm::Type *type);
 

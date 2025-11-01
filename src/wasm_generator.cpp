@@ -121,6 +121,9 @@ namespace asm2wasm
   bool WasmGenerator::convertFunction(llvm::Function *func)
   {
     localMap_.clear();
+    blockMap_.clear();
+    blockIndices_.clear();
+    currentFunction_ = func;
 
     WasmFunction wasmFunc(func->getName().str());
 
@@ -142,6 +145,12 @@ namespace asm2wasm
           assignLocalIndex(&inst, WasmType::I32, wasmFunc);
         }
       }
+    }
+
+    uint32_t blockIndex = 0;
+    for (auto &block : *func)
+    {
+      blockIndices_[&block] = blockIndex++;
     }
 
     for (auto &block : *func)
@@ -171,8 +180,42 @@ namespace asm2wasm
       }
     }
 
+    std::vector<llvm::BasicBlock *> blockOrder;
     for (auto &block : *func)
     {
+      blockOrder.push_back(&block);
+    }
+
+    std::map<llvm::BasicBlock *, size_t> blockPositions;
+    for (size_t i = 0; i < blockOrder.size(); ++i)
+    {
+      blockPositions[blockOrder[i]] = i;
+    }
+
+    for (auto &block : *func)
+    {
+      size_t currentPos = blockPositions[&block];
+      for (auto &inst : block)
+      {
+        if (llvm::isa<llvm::BranchInst>(inst))
+        {
+          llvm::BranchInst *branch = llvm::cast<llvm::BranchInst>(&inst);
+          if (branch->isUnconditional())
+          {
+            llvm::BasicBlock *target = branch->getSuccessor(0);
+            size_t targetPos = blockPositions[target];
+            if (targetPos > currentPos + 1)
+            {
+              uint32_t depth = 0;
+              for (size_t i = currentPos + 1; i < targetPos; ++i)
+              {
+                depth++;
+              }
+              blockMap_[&block] = depth;
+            }
+          }
+        }
+      }
       if (!convertBasicBlock(&block, wasmFunc))
       {
         return false;
@@ -438,6 +481,12 @@ namespace asm2wasm
 
     if (branchInst->isUnconditional())
     {
+      llvm::BasicBlock *target = branchInst->getSuccessor(0);
+      auto it = blockMap_.find(branchInst->getParent());
+      if (it != blockMap_.end())
+      {
+        instructions.push_back(WasmInstruction(WasmOpcode::BR, it->second));
+      }
       return true;
     }
     else
@@ -445,14 +494,138 @@ namespace asm2wasm
       llvm::Value *condition = branchInst->getCondition();
       llvm::BasicBlock *trueTarget = branchInst->getSuccessor(0);
       llvm::BasicBlock *falseTarget = branchInst->getSuccessor(1);
-      if (llvm::isa<llvm::LoadInst>(condition))
+
+      if (llvm::isa<llvm::ICmpInst>(condition))
+      {
+        llvm::ICmpInst *icmp = llvm::cast<llvm::ICmpInst>(condition);
+        llvm::Value *left = icmp->getOperand(0);
+        llvm::Value *right = icmp->getOperand(1);
+
+        if (llvm::isa<llvm::LoadInst>(left))
+        {
+          llvm::LoadInst *load = llvm::cast<llvm::LoadInst>(left);
+          uint32_t localIdx = getLocalIndex(load->getPointerOperand());
+          instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+        }
+        else if (llvm::isa<llvm::ConstantInt>(left))
+        {
+          auto *constInt = llvm::cast<llvm::ConstantInt>(left);
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_CONST, constInt->getZExtValue()));
+        }
+
+        if (llvm::isa<llvm::LoadInst>(right))
+        {
+          llvm::LoadInst *load = llvm::cast<llvm::LoadInst>(right);
+          uint32_t localIdx = getLocalIndex(load->getPointerOperand());
+          instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+        }
+        else if (llvm::isa<llvm::ConstantInt>(right))
+        {
+          auto *constInt = llvm::cast<llvm::ConstantInt>(right);
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_CONST, constInt->getZExtValue()));
+        }
+
+        switch (icmp->getPredicate())
+        {
+        case llvm::CmpInst::ICMP_EQ:
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_EQ));
+          break;
+        case llvm::CmpInst::ICMP_NE:
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_NE));
+          break;
+        case llvm::CmpInst::ICMP_SLT:
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_LT_S));
+          break;
+        case llvm::CmpInst::ICMP_SGT:
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_GT_S));
+          break;
+        case llvm::CmpInst::ICMP_SLE:
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_LE_S));
+          break;
+        case llvm::CmpInst::ICMP_SGE:
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_GE_S));
+          break;
+        default:
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_EQ));
+          break;
+        }
+      }
+      else if (llvm::isa<llvm::LoadInst>(condition))
       {
         llvm::LoadInst *load = llvm::cast<llvm::LoadInst>(condition);
         uint32_t localIdx = getLocalIndex(load->getPointerOperand());
         instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+        instructions.push_back(WasmInstruction(WasmOpcode::I32_CONST, 0));
+        instructions.push_back(WasmInstruction(WasmOpcode::I32_NE));
+      }
+      else if (llvm::isa<llvm::ZExtInst>(condition))
+      {
+        llvm::ZExtInst *zext = llvm::cast<llvm::ZExtInst>(condition);
+        llvm::Value *src = zext->getOperand(0);
+        if (llvm::isa<llvm::LoadInst>(src))
+        {
+          llvm::LoadInst *load = llvm::cast<llvm::LoadInst>(src);
+          uint32_t localIdx = getLocalIndex(load->getPointerOperand());
+          instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+        }
+        else
+        {
+          uint32_t localIdx = getLocalIndex(src);
+          instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+        }
+        instructions.push_back(WasmInstruction(WasmOpcode::I32_CONST, 0));
+        instructions.push_back(WasmInstruction(WasmOpcode::I32_NE));
       }
 
-      instructions.push_back(WasmInstruction(WasmOpcode::BR_IF, 0));
+      std::vector<llvm::BasicBlock *> blockOrder;
+      for (auto &block : *currentFunction_)
+      {
+        blockOrder.push_back(&block);
+      }
+
+      std::map<llvm::BasicBlock *, size_t> blockPositions;
+      for (size_t i = 0; i < blockOrder.size(); ++i)
+      {
+        blockPositions[blockOrder[i]] = i;
+      }
+
+      size_t currentPos = blockPositions[branchInst->getParent()];
+      size_t truePos = blockPositions[trueTarget];
+      size_t falsePos = blockPositions[falseTarget];
+
+      if (falsePos == currentPos + 1)
+      {
+        uint32_t depth = 0;
+        if (truePos > currentPos + 1)
+        {
+          for (size_t i = currentPos + 1; i < truePos; ++i)
+          {
+            depth++;
+          }
+        }
+        instructions.push_back(WasmInstruction(WasmOpcode::BR_IF, depth));
+      }
+      else
+      {
+        if (truePos == currentPos + 1)
+        {
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_CONST, 0));
+          instructions.push_back(WasmInstruction(WasmOpcode::I32_EQ));
+          uint32_t depth = 0;
+          if (falsePos > currentPos + 1)
+          {
+            for (size_t i = currentPos + 1; i < falsePos; ++i)
+            {
+              depth++;
+            }
+          }
+          instructions.push_back(WasmInstruction(WasmOpcode::BR_IF, depth));
+        }
+        else
+        {
+          instructions.push_back(WasmInstruction(WasmOpcode::BR_IF, 0));
+        }
+      }
     }
 
     return true;

@@ -338,17 +338,22 @@ namespace asm2wasm
     }
     else if (instruction.operands[0].type == OperandType::MEMORY)
     {
+      llvm::Value *memAddr = calculateMemoryAddress(instruction.operands[0]);
+      llvm::Value *memPtr = builder_->CreateIntToPtr(memAddr, getPtrType(), "mem_ptr");
       if (instruction.operands[1].type == OperandType::REGISTER)
       {
-        llvm::Value *memAddr = calculateMemoryAddress(instruction.operands[0]);
-        llvm::Value *memPtr = builder_->CreateIntToPtr(memAddr, getPtrType(), "mem_ptr");
         llvm::Value *reg = getOrCreateRegister(instruction.operands[1].value);
-        llvm::Value *memValue = builder_->CreateLoad(getIntType(), memPtr, "mem_val");
-        builder_->CreateStore(memValue, reg);
+        llvm::Value *regValue = builder_->CreateLoad(getIntType(), reg, "reg_val");
+        builder_->CreateStore(regValue, memPtr);
+      }
+      else if (instruction.operands[1].type == OperandType::IMMEDIATE)
+      {
+        llvm::Value *immValue = getOperandValue(instruction.operands[1]);
+        builder_->CreateStore(immValue, memPtr);
       }
       else
       {
-        errorMessage_ = "Source must be a register for memory access MOV instruction";
+        errorMessage_ = "Source must be a register or immediate for memory destination MOV instruction";
         return false;
       }
     }
@@ -649,26 +654,84 @@ namespace asm2wasm
     if (addr.find('+') != std::string::npos)
     {
       size_t plusPos = addr.find('+');
-      std::string regName = addr.substr(0, plusPos);
-      std::string offsetStr = addr.substr(plusPos + 1);
+      std::string basePart = addr.substr(0, plusPos);
+      std::string offsetPart = addr.substr(plusPos + 1);
 
-      llvm::Value *reg = getOrCreateRegister(regName);
-      llvm::Value *regValue = builder_->CreateLoad(getIntType(), reg, "base_addr");
+      llvm::Value *result = nullptr;
 
-      int offset = std::stoi(offsetStr);
-
-      if (offset % 4 == 0)
+      // ベースレジスタを処理
+      if (!basePart.empty() && basePart[0] == '%')
       {
-        llvm::Value *alignedOffset = llvm::ConstantInt::get(getIntType(), offset);
-        llvm::Value *result = builder_->CreateAdd(regValue, alignedOffset, "aligned_mem_addr");
-        return result;
+        llvm::Value *baseReg = getOrCreateRegister(basePart);
+        result = builder_->CreateLoad(getIntType(), baseReg, "base_addr");
       }
-      else
+
+      // オフセット部分を処理
+      if (offsetPart.find('*') != std::string::npos)
       {
+        // インデックス付きメモリアクセス: %reg*scale
+        size_t starPos = offsetPart.find('*');
+        std::string indexRegStr = offsetPart.substr(0, starPos);
+        std::string scaleStr = offsetPart.substr(starPos + 1);
+
+        if (indexRegStr[0] == '%')
+        {
+          llvm::Value *indexReg = getOrCreateRegister(indexRegStr);
+          llvm::Value *indexValue = builder_->CreateLoad(getIntType(), indexReg, "index_val");
+
+          int scale = std::stoi(scaleStr);
+          llvm::Value *scaleValue = llvm::ConstantInt::get(getIntType(), scale);
+          llvm::Value *scaledIndex = builder_->CreateMul(indexValue, scaleValue, "scaled_index");
+
+          if (result)
+          {
+            result = builder_->CreateAdd(result, scaledIndex, "indexed_mem_addr");
+          }
+          else
+          {
+            result = scaledIndex;
+          }
+        }
+      }
+      else if (std::all_of(offsetPart.begin(), offsetPart.end(), [](char c)
+                           { return std::isdigit(c) || c == '-' || c == '+'; }))
+      {
+        // 数値オフセット
+        int offset = std::stoi(offsetPart);
         llvm::Value *offsetValue = llvm::ConstantInt::get(getIntType(), offset);
-        llvm::Value *result = builder_->CreateAdd(regValue, offsetValue, "mem_addr");
-        return result;
+
+        if (result)
+        {
+          result = builder_->CreateAdd(result, offsetValue, "offset_mem_addr");
+        }
+        else
+        {
+          result = offsetValue;
+        }
       }
+      else if (offsetPart[0] == '%')
+      {
+        // レジスタオフセット
+        llvm::Value *offsetReg = getOrCreateRegister(offsetPart);
+        llvm::Value *offsetValue = builder_->CreateLoad(getIntType(), offsetReg, "offset_val");
+
+        if (result)
+        {
+          result = builder_->CreateAdd(result, offsetValue, "reg_offset_mem_addr");
+        }
+        else
+        {
+          result = offsetValue;
+        }
+      }
+
+      if (!result)
+      {
+        errorMessage_ = "Failed to calculate memory address: " + operand.value;
+        return nullptr;
+      }
+
+      return result;
     }
     else if (addr.find('%') != std::string::npos)
     {
