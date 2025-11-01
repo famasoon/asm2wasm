@@ -46,7 +46,7 @@ namespace asm2wasm
       if (!instructions[i].label.empty())
       {
         const std::string &labelName = instructions[i].label;
-        if (labelName == "main" || callTargets.count(labelName) > 0)
+        if (labelName == "main" || labelName == "start" || callTargets.count(labelName) > 0)
         {
           currentFunc = getOrCreateFunction(labelName);
           if (!currentFunc)
@@ -436,7 +436,9 @@ namespace asm2wasm
   {
     if (instruction.operands.empty())
     {
-      builder_->CreateRet(llvm::ConstantInt::get(getIntType(), 0));
+      llvm::Value *eaxReg = getOrCreateRegister("%eax");
+      llvm::Value *eaxValue = builder_->CreateLoad(getIntType(), eaxReg, "eax_val");
+      builder_->CreateRet(eaxValue);
     }
     else
     {
