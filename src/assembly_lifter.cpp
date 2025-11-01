@@ -488,7 +488,9 @@ namespace asm2wasm
       return false;
     }
 
-    builder_->CreateCall(func);
+    llvm::Value *callResult = builder_->CreateCall(func);
+    llvm::Value *eaxReg = getOrCreateRegister("%eax");
+    builder_->CreateStore(callResult, eaxReg);
     return true;
   }
 
@@ -496,18 +498,9 @@ namespace asm2wasm
   {
     if (instruction.operands.empty())
     {
-      llvm::Value *ecxReg = getOrCreateRegister("%ecx");
-      llvm::Value *ecxValue = builder_->CreateLoad(getIntType(), ecxReg, "ecx_val");
-      if (ecxValue)
-      {
-        builder_->CreateRet(ecxValue);
-      }
-      else
-      {
-        llvm::Value *eaxReg = getOrCreateRegister("%eax");
-        llvm::Value *eaxValue = builder_->CreateLoad(getIntType(), eaxReg, "eax_val");
-        builder_->CreateRet(eaxValue);
-      }
+      llvm::Value *eaxReg = getOrCreateRegister("%eax");
+      llvm::Value *eaxValue = builder_->CreateLoad(getIntType(), eaxReg, "eax_val");
+      builder_->CreateRet(eaxValue);
     }
     else
     {
