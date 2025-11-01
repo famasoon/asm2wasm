@@ -9,11 +9,11 @@ namespace
 {
   void printUsage(const char *programName)
   {
-    std::cout << "使用方法: " << programName << " [--wasm ファイル] [--wast ファイル] <入力ファイル>\n";
-    std::cout << "  --wasm <ファイル>  WebAssemblyバイナリを出力\n";
-    std::cout << "  --wast <ファイル>  WebAssemblyテキストを出力\n";
-    std::cout << "  -h, --help        このヘルプを表示\n";
-    std::cout << "出力ファイルを指定しない場合、入力ファイル名から .wasm/.wat を自動生成します。\n";
+    std::cout << "Usage: " << programName << " [--wasm file] [--wast file] <input file>\n";
+    std::cout << "  --wasm <file>  Output WebAssembly binary\n";
+    std::cout << "  --wast <file>  Output WebAssembly text\n";
+    std::cout << "  -h, --help     Show this help\n";
+    std::cout << "If output files are not specified, the input file name is used to generate .wasm/.wat.\n";
   }
 
   std::string deriveOutputName(const std::string &inputFile, const std::string &extension)
@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
     {
       if (i + 1 >= argc)
       {
-        std::cerr << "エラー: --wasm オプションには出力ファイル名が必要です\n";
+        std::cerr << "Error: --wasm option requires an output file name\n";
         return 1;
       }
       wasmFile = argv[++i];
@@ -57,14 +57,14 @@ int main(int argc, char *argv[])
     {
       if (i + 1 >= argc)
       {
-        std::cerr << "エラー: --wast オプションには出力ファイル名が必要です\n";
+        std::cerr << "Error: --wast option requires an output file name\n";
         return 1;
       }
       wastFile = argv[++i];
     }
     else if (!arg.empty() && arg[0] == '-')
     {
-      std::cerr << "エラー: 不明なオプション: " << arg << "\n";
+      std::cerr << "Error: unknown option: " << arg << "\n";
       printUsage(argv[0]);
       return 1;
     }
@@ -76,7 +76,7 @@ int main(int argc, char *argv[])
 
   if (inputFile.empty())
   {
-    std::cerr << "エラー: 入力ファイルが指定されていません\n";
+    std::cerr << "Error: input file is not specified\n";
     printUsage(argv[0]);
     return 1;
   }
@@ -85,64 +85,64 @@ int main(int argc, char *argv[])
   {
     wasmFile = deriveOutputName(inputFile, ".wasm");
     wastFile = deriveOutputName(inputFile, ".wat");
-    std::cout << "出力ファイルが指定されていないため、" << wasmFile << " と " << wastFile << " を使用します。\n";
+    std::cout << "Output files are not specified, using " << wasmFile << " and " << wastFile << "\n";
   }
 
-  std::cout << "Assemblyファイルを解析中: " << inputFile << "\n";
+  std::cout << "Parsing Assembly file: " << inputFile << "\n";
 
   asm2wasm::AssemblyParser parser;
   if (!parser.parseFile(inputFile))
   {
-    std::cerr << "パースエラー: " << parser.getErrorMessage() << "\n";
+    std::cerr << "Parse error: " << parser.getErrorMessage() << "\n";
     return 1;
   }
 
   asm2wasm::AssemblyLifter lifter;
   if (!lifter.liftToLLVM(parser.getInstructions(), parser.getLabels()))
   {
-    std::cerr << "Assemblyリフターエラー: " << lifter.getErrorMessage() << "\n";
+    std::cerr << "Assembly lifter error: " << lifter.getErrorMessage() << "\n";
     return 1;
   }
 
   llvm::Module *module = lifter.getModule();
   if (!module)
   {
-    std::cerr << "エラー: LLVMモジュールを取得できませんでした\n";
+    std::cerr << "Error: LLVM module cannot be obtained\n";
     return 1;
   }
 
   asm2wasm::WasmGenerator wasmGenerator;
   if (!wasmGenerator.generateWasm(module))
   {
-    std::cerr << "WebAssembly生成エラー: " << wasmGenerator.getErrorMessage() << "\n";
+    std::cerr << "WebAssembly generation error: " << wasmGenerator.getErrorMessage() << "\n";
     return 1;
   }
 
   if (!wasmFile.empty())
   {
-    std::cout << "WebAssemblyバイナリを出力中: " << wasmFile << "\n";
+    std::cout << "Outputting WebAssembly binary: " << wasmFile << "\n";
     if (!wasmGenerator.writeWasmToFile(wasmFile))
     {
-      std::cerr << "WebAssemblyバイナリ出力エラー: " << wasmGenerator.getErrorMessage() << "\n";
+      std::cerr << "WebAssembly binary output error: " << wasmGenerator.getErrorMessage() << "\n";
       return 1;
     }
   }
 
   if (!wastFile.empty())
   {
-    std::cout << "WebAssemblyテキストを出力中: " << wastFile << "\n";
+    std::cout << "Outputting WebAssembly text: " << wastFile << "\n";
     if (!wasmGenerator.writeWastToFile(wastFile))
     {
-      std::cerr << "WebAssemblyテキスト出力エラー: " << wasmGenerator.getErrorMessage() << "\n";
+      std::cerr << "WebAssembly text output error: " << wasmGenerator.getErrorMessage() << "\n";
       return 1;
     }
   }
 
-  std::cout << "生成されたWebAssemblyテキスト:\n";
+  std::cout << "Generated WebAssembly text:\n";
   std::cout << "----------------------------------------\n";
   std::cout << wasmGenerator.getWastString();
   std::cout << "----------------------------------------\n";
-  std::cout << "WebAssembly変換が完了しました。\n";
+  std::cout << "WebAssembly conversion completed.\n";
 
   return 0;
 }
