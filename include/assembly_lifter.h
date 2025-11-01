@@ -42,6 +42,7 @@ namespace asm2wasm
     std::map<std::string, llvm::BasicBlock *> blocks_;
     std::map<std::string, llvm::Function *> functions_;
     std::string errorMessage_;
+    size_t fallthroughCounter_;
 
     llvm::Value *getOrCreateRegister(const std::string &regName);
     llvm::Value *getOperandValue(const Operand &operand);

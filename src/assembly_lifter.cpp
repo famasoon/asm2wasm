@@ -24,11 +24,13 @@ namespace asm2wasm
     blocks_.clear();
     functions_.clear();
     errorMessage_.clear();
+    fallthroughCounter_ = 0;
   }
 
   bool AssemblyLifter::liftToLLVM(const std::vector<Instruction> &instructions,
                                   const std::map<std::string, size_t> &labels)
   {
+    fallthroughCounter_ = 0;
     std::map<std::string, bool> callTargets;
     for (const auto &inst : instructions)
     {
@@ -40,13 +42,14 @@ namespace asm2wasm
 
     llvm::FunctionType *funcType = llvm::FunctionType::get(getIntType(), false);
     llvm::Function *currentFunc = nullptr;
+    bool isFirstLabel = true;
 
     for (size_t i = 0; i < instructions.size(); ++i)
     {
       if (!instructions[i].label.empty())
       {
         const std::string &labelName = instructions[i].label;
-        if (labelName == "main" || labelName == "start" || callTargets.count(labelName) > 0)
+        if (labelName == "main" || labelName == "start" || callTargets.count(labelName) > 0 || isFirstLabel)
         {
           currentFunc = getOrCreateFunction(labelName);
           if (!currentFunc)
@@ -57,6 +60,7 @@ namespace asm2wasm
           registers_.clear();
           llvm::BasicBlock *funcEntry = llvm::BasicBlock::Create(*context_, labelName, currentFunc);
           builder_->SetInsertPoint(funcEntry);
+          isFirstLabel = false;
         }
         else
         {
@@ -76,6 +80,17 @@ namespace asm2wasm
           builder_->SetInsertPoint(labelBlock);
         }
       }
+      else if (!currentFunc && isFirstLabel)
+      {
+        currentFunc = getOrCreateFunction("main");
+        if (!currentFunc)
+        {
+          return false;
+        }
+        llvm::BasicBlock *funcEntry = llvm::BasicBlock::Create(*context_, "main", currentFunc);
+        builder_->SetInsertPoint(funcEntry);
+        isFirstLabel = false;
+      }
 
       if (!liftInstruction(instructions[i], i))
       {
@@ -94,7 +109,6 @@ namespace asm2wasm
         }
       }
     }
-
     applyOptimizationPasses();
 
     std::string verifyError;
@@ -124,6 +138,51 @@ namespace asm2wasm
     if (it != registers_.end())
     {
       return it->second;
+    }
+
+    llvm::BasicBlock *currentBlock = builder_->GetInsertBlock();
+    llvm::Function *currentFunc = nullptr;
+    if (currentBlock)
+    {
+      currentFunc = currentBlock->getParent();
+    }
+    else
+    {
+      auto funcIt = functions_.find("main");
+      if (funcIt != functions_.end())
+      {
+        currentFunc = funcIt->second;
+      }
+      else
+      {
+        currentFunc = getOrCreateFunction("main");
+      }
+      if (!currentFunc || currentFunc->empty())
+      {
+        llvm::BasicBlock *entry = llvm::BasicBlock::Create(*context_, "entry", currentFunc);
+        builder_->SetInsertPoint(entry);
+      }
+      else
+      {
+        builder_->SetInsertPoint(&currentFunc->front());
+      }
+    }
+
+    if (currentFunc && !currentFunc->empty())
+    {
+      llvm::BasicBlock *entryBlock = &currentFunc->front();
+      llvm::IRBuilder<> entryBuilder(entryBlock);
+      if (!entryBlock->empty())
+      {
+        entryBuilder.SetInsertPoint(&entryBlock->front());
+      }
+      llvm::Value *reg = entryBuilder.CreateAlloca(getIntType(), nullptr, regName);
+      registers_[regName] = reg;
+      if (currentBlock)
+      {
+        builder_->SetInsertPoint(currentBlock);
+      }
+      return reg;
     }
 
     llvm::Value *reg = builder_->CreateAlloca(getIntType(), nullptr, regName);
@@ -374,7 +433,8 @@ namespace asm2wasm
       };
 
       llvm::Function *currentFunc = builder_->GetInsertBlock()->getParent();
-      llvm::BasicBlock *fallthrough = llvm::BasicBlock::Create(*context_, "cont", currentFunc);
+      std::string fallthroughName = "fallthrough_" + std::to_string(fallthroughCounter_++);
+      llvm::BasicBlock *fallthrough = llvm::BasicBlock::Create(*context_, fallthroughName, currentFunc);
 
       switch (instruction.type)
       {
@@ -436,9 +496,18 @@ namespace asm2wasm
   {
     if (instruction.operands.empty())
     {
-      llvm::Value *eaxReg = getOrCreateRegister("%eax");
-      llvm::Value *eaxValue = builder_->CreateLoad(getIntType(), eaxReg, "eax_val");
-      builder_->CreateRet(eaxValue);
+      llvm::Value *ecxReg = getOrCreateRegister("%ecx");
+      llvm::Value *ecxValue = builder_->CreateLoad(getIntType(), ecxReg, "ecx_val");
+      if (ecxValue)
+      {
+        builder_->CreateRet(ecxValue);
+      }
+      else
+      {
+        llvm::Value *eaxReg = getOrCreateRegister("%eax");
+        llvm::Value *eaxValue = builder_->CreateLoad(getIntType(), eaxReg, "eax_val");
+        builder_->CreateRet(eaxValue);
+      }
     }
     else
     {
