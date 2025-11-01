@@ -153,7 +153,8 @@ namespace asm2wasm
             llvm::isa<llvm::ZExtInst>(inst) ||
             llvm::isa<llvm::IntToPtrInst>(inst) ||
             llvm::isa<llvm::PtrToIntInst>(inst) ||
-            llvm::isa<llvm::BitCastInst>(inst))
+            llvm::isa<llvm::BitCastInst>(inst) ||
+            llvm::isa<llvm::PHINode>(inst))
         {
           WasmType resultType = convertLLVMType(inst.getType());
           assignLocalIndex(&inst, resultType, wasmFunc);
@@ -263,6 +264,11 @@ namespace asm2wasm
         uint32_t localIdx = getLocalIndex(load->getPointerOperand());
         instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
       }
+      else if (llvm::isa<llvm::PHINode>(op) || llvm::isa<llvm::Instruction>(op))
+      {
+        uint32_t localIdx = getLocalIndex(op);
+        instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, localIdx));
+      }
       else
       {
         errorMessage_ = "Unsupported ZExt operand";
@@ -272,6 +278,10 @@ namespace asm2wasm
       uint32_t resultIdx = assignLocalIndex(inst, convertLLVMType(inst->getType()), wasmFunc);
       instructions.push_back(WasmInstruction(WasmOpcode::SET_LOCAL, resultIdx));
       return true;
+    }
+    else if (llvm::isa<llvm::PHINode>(inst))
+    {
+      return convertPhiInstruction(inst, wasmFunc);
     }
 
     errorMessage_ = "Unsupported LLVM instruction: " + std::string(inst->getOpcodeName());
@@ -628,6 +638,17 @@ namespace asm2wasm
     }
 
     return 0;
+  }
+
+  bool WasmGenerator::convertPhiInstruction(llvm::Instruction *inst, WasmFunction &wasmFunc)
+  {
+    auto &instructions = wasmFunc.instructions;
+    llvm::PHINode *phi = llvm::cast<llvm::PHINode>(inst);
+
+    uint32_t resultIdx = getLocalIndex(phi);
+
+    instructions.push_back(WasmInstruction(WasmOpcode::GET_LOCAL, resultIdx));
+    return true;
   }
 
   std::vector<uint8_t> WasmGenerator::generateBinary() const

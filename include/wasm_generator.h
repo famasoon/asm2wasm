@@ -292,6 +292,7 @@ namespace asm2wasm
     bool convertIntToPtrInstruction(llvm::Instruction *inst, WasmFunction &wasmFunc);
     bool convertPtrToIntInstruction(llvm::Instruction *inst, WasmFunction &wasmFunc);
     bool convertBitCastInstruction(llvm::Instruction *inst, WasmFunction &wasmFunc);
+    bool convertPhiInstruction(llvm::Instruction *inst, WasmFunction &wasmFunc);
 
     uint32_t assignLocalIndex(llvm::Value *value, WasmType type, WasmFunction &wasmFunc);
     uint32_t getLocalIndex(llvm::Value *value);
