@@ -16,7 +16,10 @@ set(SOURCES
     src/main.cpp
     src/assembly_parser.cpp
     src/wasm_generator.cpp
-    src/assembly_lifter.cpp
+    src/assembly_lifter_core.cpp
+    src/assembly_lifter_instructions.cpp
+    src/assembly_lifter_control_flow.cpp
+    src/assembly_lifter_memory.cpp
 )
 
 set(HEADERS
