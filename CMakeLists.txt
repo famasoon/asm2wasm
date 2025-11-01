@@ -32,7 +32,7 @@ set(HEADERS
 add_executable(asmtowasm ${SOURCES} ${HEADERS})
 
 # LLVMライブラリをリンク
-llvm_map_components_to_libnames(llvm_libs support core)
+llvm_map_components_to_libnames(llvm_libs support core instcombine scalaropts transformutils)
 target_link_libraries(asmtowasm ${llvm_libs})
 
 # コンパイラフラグの設定
