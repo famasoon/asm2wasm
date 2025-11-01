@@ -3,12 +3,6 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Pass.h>
-#include <llvm/IR/LegacyPassManager.h>
-#include <llvm/Transforms/IPO.h>
-#include <llvm/Transforms/Scalar.h>
-#include <llvm/Transforms/InstCombine/InstCombine.h>
-#include <llvm/Transforms/Utils.h>
 
 #include <sstream>
 
@@ -147,14 +141,6 @@ namespace asm2wasm
         llvm::raw_string_ostream dumpStream(moduleDump);
         module_->print(dumpStream, nullptr);
       }
-    }
-
-    try
-    {
-      applyOptimizationPasses();
-    }
-    catch (...)
-    {
     }
 
     return true;
@@ -708,50 +694,4 @@ namespace asm2wasm
     builder_->CreateStore(value, flagReg);
   }
 
-  void AssemblyLifter::applyOptimizationPasses()
-  {
-    if (!module_)
-    {
-      return;
-    }
-
-    for (auto &func : *module_)
-    {
-      if (func.isDeclaration())
-        continue;
-
-      std::string verifyError;
-      llvm::raw_string_ostream vs(verifyError);
-      if (llvm::verifyFunction(func, &vs))
-      {
-        return;
-      }
-    }
-
-    try
-    {
-      llvm::legacy::PassManager passManager;
-
-      passManager.add(llvm::createDeadCodeEliminationPass());
-      passManager.add(llvm::createCFGSimplificationPass());
-
-      passManager.run(*module_);
-
-      for (auto &func : *module_)
-      {
-        if (func.isDeclaration())
-          continue;
-
-        std::string verifyError;
-        llvm::raw_string_ostream vs(verifyError);
-        if (llvm::verifyFunction(func, &vs))
-        {
-          return;
-        }
-      }
-    }
-    catch (...)
-    {
-    }
-  }
 }

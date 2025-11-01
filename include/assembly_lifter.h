@@ -68,7 +68,5 @@ namespace asm2wasm
 
     llvm::Value *getFlagRegister(const std::string &flagName);
     void setFlagRegister(const std::string &flagName, llvm::Value *value);
-
-    void applyOptimizationPasses();
   };
 }
